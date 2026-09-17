@@ -245,18 +245,18 @@
 
   .plantcards{display:flex;flex-direction:column;gap:8px;margin-top:12px;}
   .plantcard{
-    display:flex;align-items:center;gap:12px;padding:8px;border-radius:12px;
+    display:flex;align-items:center;gap:14px;padding:10px;border-radius:14px;
     background:#00000006;cursor:pointer;transition:background .15s;
   }
   .plantcard:active{background:#00000012;}
   .plantcard-thumb{
-    width:46px;height:46px;border-radius:10px;flex:0 0 auto;overflow:hidden;
+    width:72px;height:72px;border-radius:12px;flex:0 0 auto;overflow:hidden;
     display:flex;align-items:center;justify-content:center;
   }
   .plantcard-thumb img{width:100%;height:100%;object-fit:cover;display:block;}
   .plantcard-info{flex:1;min-width:0;}
-  .plantcard-info b{font-size:.9rem;}
-  .plantcard-info .fam{font-size:.7rem;color:#00000070;margin-top:2px;}
+  .plantcard-info b{font-size:1rem;}
+  .plantcard-info .fam{font-size:.72rem;color:#00000070;margin-top:3px;}
   .plantrow-lg{padding:13px 2px;font-size:.95rem;}
   .plantrow-lg b{font-size:1rem;}
   .plantrow-lg .fam{font-size:.75rem;}
@@ -540,24 +540,27 @@
 
     <div class="chiprow" id="teichModeChips"></div>
 
-    <div id="teichAlle">
-      <div class="chiprow" id="teichChips"></div>
-      <div class="grid" id="teichGrid"></div>
-    </div>
-
-    <div id="teichMeine" style="display:none">
+    <div id="teichMeine">
       <div id="meineTeichListe"></div>
       <button class="btn block" id="addTeichBtn">+ Neuen Teich anlegen</button>
     </div>
 
-    <h4 style="margin:20px 0 8px">🗓️ Saisonale Pflege</h4>
-    <div id="teichSaison" class="calsection"></div>
+    <div id="teichAlle" style="display:none">
+      <div class="chiprow" id="teichChips"></div>
+      <div class="grid" id="teichGrid"></div>
+    </div>
 
-    <h4 style="margin:18px 0 8px">🧪 Wasserwerte protokollieren</h4>
-    <div id="wasserwerteBox"></div>
+    <button class="btn secondary block" id="teichToolsToggleBtn" style="margin:20px 0 10px;text-align:left">🗓️ Saisonale Pflege, Wasserwerte & Algen-Tipps</button>
+    <div id="teichToolsBox" style="display:none">
+      <h4 style="margin:0 0 8px">🗓️ Saisonale Pflege</h4>
+      <div id="teichSaison" class="calsection"></div>
 
-    <h4 style="margin:18px 0 8px">🌿 Algen-Kurzratgeber</h4>
-    <div class="grid" id="algenGrid"></div>
+      <h4 style="margin:18px 0 8px">🧪 Wasserwerte protokollieren</h4>
+      <div id="wasserwerteBox"></div>
+
+      <h4 style="margin:18px 0 8px">🌿 Algen-Kurzratgeber</h4>
+      <div class="grid" id="algenGrid"></div>
+    </div>
   </section>
 
   <!-- ===================== KALENDER ===================== -->
@@ -2074,7 +2077,7 @@ function openMeineStaudeDetail(id){
    TEICH
    ==================================================================== */
 let activeTeichZone = null;
-let teichMode = "alle";
+let teichMode = "meine";
 
 const wasserwerteStore = {
   load(){ try{ return JSON.parse(localStorage.getItem("beetbuch_teich_werte")||"[]"); }catch(e){ return []; } },
@@ -2348,6 +2351,12 @@ function openTeichPicker(name, onDone){
   });
 }
 
+let teichToolsOpen = false;
+document.getElementById("teichToolsToggleBtn").addEventListener("click",()=>{
+  teichToolsOpen = !teichToolsOpen;
+  document.getElementById("teichToolsBox").style.display = teichToolsOpen ? "block" : "none";
+});
+
 function renderTeich(){
   renderTeichSaison();
   renderWasserwerte();
@@ -2411,7 +2420,7 @@ function renderMeineTeich(){
       const rows = t.plantings.map(m=>{
         const v = TEICHPFLANZEN.find(x=>x.n===m.n);
         return `<div class="plantcard" data-open="${t.id}|${m.id}">
-          <div class="plantcard-thumb" id="plantthumb-${m.id}" style="background:${v?v.farbe+'22':'#00000010'}">${v?plantPhotoHtml(m.n,flowerIcon(v.farbe,30),30):""}</div>
+          <div class="plantcard-thumb" id="plantthumb-${m.id}" style="background:${v?v.farbe+'22':'#00000010'}">${v?plantPhotoHtml(m.n,flowerIcon(v.farbe,44),72):""}</div>
           <div class="plantcard-info">
             <b>${m.n}</b>
             <div class="fam">${v?TEICH_ZONEN[v.zone]:""} · gesetzt ${fmtDate(m.plantDate)||"–"}</div>
