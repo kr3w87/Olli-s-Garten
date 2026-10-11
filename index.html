@@ -517,7 +517,7 @@
     <div id="weatherBoxStauden" style="margin-bottom:14px"></div>
     <div class="chiprow" id="staudenModeChips"></div>
 
-    <div id="staudenAlle">
+    <div id="staudenAlle" style="display:none">
       <div class="searchrow">
         <input type="search" id="staudenSearch" placeholder="Staude suchen…">
       </div>
@@ -529,7 +529,7 @@
       <div class="grid" id="staudenGrid"></div>
     </div>
 
-    <div id="staudenMeine" style="display:none">
+    <div id="staudenMeine">
       <div id="meineStaudenList"></div>
     </div>
   </section>
@@ -1820,7 +1820,7 @@ document.getElementById("detailOverlay").addEventListener("click",e=>{
    STAUDEN
    ==================================================================== */
 let staudenSearch = "";
-let staudenMode = "alle";
+let staudenMode = "meine";
 
 const staudenStore = {
   load(){ try{ return JSON.parse(localStorage.getItem("beetbuch_meine_stauden")||"[]"); }catch(e){ return []; } },
@@ -1952,20 +1952,20 @@ function renderMeineStauden(){
     wrap.innerHTML = `<div class="emptystate"><span class="ic">🌸</span>Noch keine Staude hinzugefügt.<br>Wechsle zu „Alle Stauden“, öffne eine Pflanze und tippe auf „Zu meinen Stauden hinzufügen“.</div>`;
     return;
   }
+  wrap.className = "plantcards";
   wrap.innerHTML = meineStauden.map(m=>{
     const v = STAUDEN.find(s=>s.n===m.n);
     const interval = v ? v.giess : 5;
     const ds = m.lastWatered ? daysSince(m.lastWatered) : daysSince(m.plantDate);
     const due = ds!==null && ds>=interval;
-    return `<div class="bed">
-      <div class="bedhead">
-        <div class="rowopen" data-open="${m.id}">
-          <div class="picon" style="position:static">${v?plantPhotoHtml(m.n,flowerIcon(v.farbe,30),30):""}</div>
-          <div><h3>${m.n}</h3><div class="bedmeta">gepflanzt ${fmtDate(m.plantDate)||"–"}</div></div>
-        </div>
-        <span style="color:${due?'var(--tomato)':'var(--moss-dark)'};font-size:.75rem;font-weight:700;white-space:nowrap;margin-right:8px">${ds===null?'💧 offen':due?'💧 fällig':'💧 vor '+ds+'T'}</span>
-        <button class="rowdel" data-qdel="${m.id}" title="Entfernen">🗑</button>
+    return `<div class="plantcard" data-open="${m.id}">
+      <div class="plantcard-thumb" id="stthumb-${m.id}" style="background:${v?v.farbe+'22':'#00000010'}">${v?plantPhotoHtml(m.n,flowerIcon(v.farbe,44),72):""}</div>
+      <div class="plantcard-info">
+        <b>${m.n}</b>
+        <div class="fam">gepflanzt ${fmtDate(m.plantDate)||"–"}</div>
+        <div style="color:${due?'var(--tomato)':'var(--moss-dark)'};font-size:.75rem;font-weight:700;margin-top:2px">${ds===null?'💧 offen':due?'💧 fällig':'💧 vor '+ds+'T'}</div>
       </div>
+      <button class="rowdel" data-qdel="${m.id}" title="Entfernen">🗑</button>
     </div>`;
   }).join("");
   wrap.querySelectorAll("[data-open]").forEach(el=>{
@@ -1981,6 +1981,12 @@ function renderMeineStauden(){
       staudenStore.save(meineStauden);
       renderMeineStauden(); renderStaudenModeChips();
     });
+  });
+  meineStauden.forEach(m=>{
+    photoDB.get(m.id).then(photo=>{
+      const el = document.getElementById(`stthumb-${m.id}`);
+      if(photo && el) el.innerHTML = `<img src="${photo}" alt="${m.n}">`;
+    }).catch(()=>{});
   });
 }
 
