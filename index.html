@@ -486,7 +486,7 @@
   <section id="view-beete" class="view">
     <div id="weatherBox" style="margin-bottom:14px"></div>
 
-    <div class="notifyrow"><button class="notifybtn" id="notifyBtn">🔔 Erinnerungen</button></div>
+    <div class="notifyrow" style="gap:8px"><button class="notifybtn" id="dryBtn">💧 Nur bei Trockenheit</button><button class="notifybtn" id="notifyBtn">🔔 Erinnerungen</button></div>
     <h4 style="margin:0 0 8px">📋 Anstehende Aufgaben</h4>
     <div id="remindBar"></div>
 
@@ -566,6 +566,7 @@
   <!-- ===================== KALENDER ===================== -->
   <section id="view-kalender" class="view">
     <div id="moonBox" style="margin-bottom:14px"></div>
+    <div id="calNow"></div>
     <div class="monthpicker" id="monthPicker"></div>
     <div id="calContent"></div>
   </section>
@@ -1367,7 +1368,7 @@ const WEATHER_LOC_KEY = "beetbuch_weather_loc";
 const WEATHER_KEY = "beetbuch_weather_cache";
 
 async function fetchWeather(lat,lon){
-  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,precipitation&daily=precipitation_sum,sunrise,sunset,temperature_2m_min&past_days=3&forecast_days=2&timezone=auto`;
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,precipitation&daily=precipitation_sum,sunrise,sunset,temperature_2m_min,temperature_2m_max&past_days=7&forecast_days=2&timezone=auto`;
   const res = await fetch(url);
   if(!res.ok) throw new Error("Wetter nicht abrufbar");
   return res.json();
@@ -1392,7 +1393,20 @@ function rainLast3Days(data){
   const sums = data.daily.precipitation_sum;
   const past = sums.slice(0, Math.max(0,sums.length-2)); // die beiden Vorhersagetage ausklammern
   if(past.length===0) return null;
-  return past.reduce((a,b)=>a+(b||0),0);
+  return past.slice(-3).reduce((a,b)=>a+(b||0),0);
+}
+/* Wie viele Tage in Folge (bis gestern) fiel kaum Regen (<1 mm)? */
+function dryStreak(data){
+  if(!data || !data.daily || !data.daily.precipitation_sum) return null;
+  const sums = data.daily.precipitation_sum;
+  const past = sums.slice(0, Math.max(0,sums.length-2));
+  if(past.length===0) return null;
+  let n=0;
+  for(let i=past.length-1;i>=0;i--){ if((past[i]||0)<1) n++; else break; }
+  return n;
+}
+function hotToday(data){
+  try{ const mx=data.daily.temperature_2m_max; if(!mx) return false; return (mx[mx.length-2]||0)>=28; }catch(e){ return false; }
 }
 /* Gibt zusätzliche Tage zurück, um die eine Gieß-Fälligkeit bei ausreichend Regen verschoben wird */
 function weatherRainBuffer(){
@@ -1401,10 +1415,30 @@ function weatherRainBuffer(){
     if(!cached) return 0;
     const rain3 = rainLast3Days(cached.data);
     if(rain3===null) return 0;
+    const streak = dryStreak(cached.data);
+    if(streak!==null && streak>=4 && hotToday(cached.data)) return -2;
+    if(streak!==null && streak>=3 && hotToday(cached.data)) return -1;
     if(rain3>=8) return 3;
     if(rain3>=3) return 1;
     return 0;
   }catch(e){ return 0; }
+}
+
+const DRYONLY_KEY = "beetbuch_dryonly";
+function dryOnlyOn(){ return localStorage.getItem(DRYONLY_KEY)!=="0"; }
+/* Liefert einen Grund (Text), warum heute nicht gegossen werden muss, sonst null */
+function wateringSkipReason(){
+  if(!dryOnlyOn()) return null;
+  try{
+    const cached = JSON.parse(localStorage.getItem(WEATHER_KEY)||"null");
+    if(!cached || !cached.data || !cached.data.daily) return null;
+    const sums = cached.data.daily.precipitation_sum||[];
+    const ahead = sums.slice(-2).reduce((a,b)=>a+(b||0),0);
+    const rain3 = rainLast3Days(cached.data);
+    if(ahead>=4) return `Regen angesagt (${ahead.toFixed(1)} mm heute/morgen)`;
+    if(rain3!==null && rain3>=5) return `genug Regen in den letzten 3 Tagen (${rain3.toFixed(1)} mm)`;
+  }catch(e){}
+  return null;
 }
 
 function requestWeatherLocation(boxId){
@@ -1469,7 +1503,7 @@ async function renderWeatherWidget(boxId,forceRefresh){
       <span>🌇 Sonnenuntergang <b>${sun.sunset}</b></span>
     </div>` : ""}
     ${frost && frost.risk ? `<div class="warnbox" style="margin-top:8px">❄️ Frostgefahr in den kommenden Nächten (min. ${frost.minVal.toFixed(1)}°C) – empfindliche Pflanzen abdecken oder reinholen!</div>` : ""}
-    ${rain3!==null ? `<div class="${dry?'warnbox':'okbox'}" style="margin-top:8px">${dry?'☀️ Wenig Regen zuletzt – Gießen ist wahrscheinlich sinnvoll.':'💧 Genug Regen zuletzt – Gieß-Erinnerungen werden automatisch etwas verschoben.'}</div>` : ""}
+    ${rain3!==null ? `<div class="${dry?'warnbox':'okbox'}" style="margin-top:8px">${dry?`☀️ ${dryStreak(cached.data)>=2?dryStreak(cached.data)+' Tage ohne nennenswerten Regen':'Wenig Regen zuletzt'}${hotToday(cached.data)?' und heiß':''} – Gießen ist sinnvoll${hotToday(cached.data)&&dryStreak(cached.data)>=3?', Erinnerungen kommen früher':''}.`:'💧 Genug Regen zuletzt – Gieß-Erinnerungen werden automatisch etwas verschoben.'}</div>` : ""}
     <div style="font-size:.66rem;color:#00000060;margin-top:6px">Aktualisiert ${ageText}</div>
   </div>`;
   document.getElementById(`weatherRefresh-${boxId}`).addEventListener("click",()=>renderWeatherWidget(boxId,true));
@@ -1479,6 +1513,7 @@ function getTasks(){
   const tasks = [];
   const todayM = new Date().getMonth()+1;
   const rainBuffer = weatherRainBuffer();
+  const skipWater = wateringSkipReason();
 
   // Frostgefahr – höchste Priorität, ganz oben in der Liste
   try{
@@ -1515,9 +1550,9 @@ function getTasks(){
         return;
       }
 
-      const interval = giessInterval(v) + rainBuffer;
+      const interval = Math.max(1, giessInterval(v) + rainBuffer);
       const dsW = p.lastWatered ? daysSince(p.lastWatered) : daysSince(p.plantDate);
-      if(dsW!==null && dsW>=interval){
+      if(!skipWater && dsW!==null && dsW>=interval){
         tasks.push({icon:"💧",text:`${p.vegName} in „${bed.name}“ gießen`,onClick:()=>openPlantDetail(bed.id,p.id),
           quickDone:()=>{ p.lastWatered = todayISO(); store.save(beds); }});
       }
@@ -1539,7 +1574,7 @@ function getTasks(){
     const v = STAUDEN.find(s=>s.n===m.n);
     if(!v) return;
     const dsW = m.lastWatered ? daysSince(m.lastWatered) : daysSince(m.plantDate);
-    if(dsW!==null && dsW>=(v.giess+rainBuffer)){
+    if(!skipWater && dsW!==null && dsW>=Math.max(1,v.giess+rainBuffer)){
       tasks.push({icon:"💧",text:`${m.n} (Meine Stauden) gießen`,onClick:()=>openMeineStaudeDetail(m.id),
         quickDone:()=>{ m.lastWatered = todayISO(); staudenStore.save(meineStauden); }});
     }
@@ -1562,6 +1597,7 @@ function getTasks(){
     });
   });
 
+  if(skipWater) tasks.skipWater = skipWater;
   return tasks;
 }
 
@@ -1569,12 +1605,21 @@ const NOTIFY_KEY = "beetbuch_notify_on";
 const NOTIFY_LAST_KEY = "beetbuch_notify_last";
 function notifyEnabled(){ return localStorage.getItem(NOTIFY_KEY)==="1" && typeof Notification!=="undefined" && Notification.permission==="granted"; }
 
-function checkAndNotify(){
+async function checkAndNotify(){
   if(!notifyEnabled()) return;
+  if(localStorage.getItem(NOTIFY_LAST_KEY)===todayISO()) return;
+  // Vor der Meldung frische Wetterdaten holen, damit nur bei echter Trockenheit ans Gießen erinnert wird
+  try{
+    const loc = JSON.parse(localStorage.getItem(WEATHER_LOC_KEY)||"null");
+    const cached = JSON.parse(localStorage.getItem(WEATHER_KEY)||"null");
+    if(loc && (!cached || Date.now()-cached.fetchedAt > 3*60*60*1000)){
+      const data = await fetchWeather(loc.lat,loc.lon);
+      localStorage.setItem(WEATHER_KEY, JSON.stringify({data, fetchedAt: Date.now()}));
+    }
+  }catch(e){}
   const tasks = getTasks();
   if(tasks.length===0) return;
-  if(localStorage.getItem(NOTIFY_LAST_KEY)===todayISO()) return;
-  const body = tasks.slice(0,3).map(t=>t.text).join(", ") + (tasks.length>3?` +${tasks.length-3} weitere`:"");
+  const body = tasks.slice(0,3).map(t=>t.text).join(", ") + (tasks.length>3?` +${tasks.length-3} weitere`:"") + (tasks.skipWater?` · Gießen heute nicht nötig: ${tasks.skipWater}`:"");
   const show = reg => reg.showNotification("📋 Anstehende Aufgaben",{body,icon:"icon-192.png",badge:"icon-192.png"});
   if("serviceWorker" in navigator){
     navigator.serviceWorker.ready.then(show).catch(()=>{ try{ new Notification("📋 Anstehende Aufgaben",{body}); }catch(e){} });
@@ -2746,6 +2791,16 @@ document.getElementById("notifyBtn").addEventListener("click",()=>{
     updateNotifyBtn();
   });
 });
+function updateDryBtn(){
+  const b = document.getElementById("dryBtn");
+  b.classList.toggle("on",dryOnlyOn());
+  b.textContent = dryOnlyOn() ? "💧 Nur bei Trockenheit: an" : "💧 Nur bei Trockenheit: aus";
+}
+document.getElementById("dryBtn").addEventListener("click",()=>{
+  localStorage.setItem(DRYONLY_KEY, dryOnlyOn()?"0":"1");
+  updateDryBtn(); renderBeds();
+  if(dryOnlyOn() && !localStorage.getItem(WEATHER_LOC_KEY)) alert("Tipp: Gib im Wetter-Feld deinen Standort frei, damit die App Regen berücksichtigen kann.");
+});
 function updateNotifyBtn(){
   const btn = document.getElementById("notifyBtn");
   const on = notifyEnabled();
@@ -2983,8 +3038,9 @@ function renderBeds(){
   // Anstehende Aufgaben
   const tasks = getTasks();
   const remindBar = document.getElementById("remindBar");
+  const dryNote = tasks.skipWater ? `<div class="okbox" style="margin-bottom:10px">💧 Heute nicht gießen: ${tasks.skipWater}.</div>` : "";
   if(tasks.length>0){
-    remindBar.innerHTML = `<div class="remindbar">
+    remindBar.innerHTML = dryNote + `<div class="remindbar">
       ${tasks.map((t,i)=>`<div class="ritem" data-task="${i}">
         <span class="ritem-text">${t.icon} ${t.text}</span>
         ${t.quickDone ? `<button class="quickdone" data-done="${i}" title="Erledigt">✓</button>` : ""}
@@ -3006,7 +3062,7 @@ function renderBeds(){
       });
     });
   } else {
-    remindBar.innerHTML = `<div class="okbox" style="margin-bottom:14px">✅ Aktuell liegt nichts an – alles im grünen Bereich.</div>`;
+    remindBar.innerHTML = dryNote + `<div class="okbox" style="margin-bottom:14px">✅ Aktuell liegt nichts an – alles im grünen Bereich.</div>`;
   }
   document.querySelector('[data-view="beete"] .dot')?.remove();
   if(tasks.length>0){
@@ -3340,15 +3396,73 @@ function cellLabel(bed,i){
   return `Reihe ${Math.floor(i/cols)+1}, Spalte ${(i%cols)+1}`;
 }
 
+/* Beziehung zweier Pflanzen: "bad", "good" oder "" */
+function pairRel(newName, otherName){
+  const nv = vegById(newName), ov = vegById(otherName);
+  if(!nv || !ov || newName===otherName) return "";
+  if(GRUENDUENGUNG.includes(nv) || GRUENDUENGUNG.includes(ov)) return "";
+  const nsn=(nv.sn||[]), ngn=(nv.gn||[]), osn=(ov.sn||[]), ogn=(ov.gn||[]);
+  if(nsn.some(x=>x===otherName||(x==="anderer Kohl"&&ov.fk==="kohl")) || osn.includes(newName) || osn.some(x=>x==="anderer Kohl"&&nv.fk==="kohl")) return "bad";
+  if(ngn.includes(otherName) || ogn.includes(newName)) return "good";
+  return "";
+}
+/* Nachbarzellen (inkl. diagonal) einer Position */
+function adjacentCells(bed,i){
+  const rows=bed.rows||3, cols=bed.cols||4;
+  const r=Math.floor(i/cols), c=i%cols, out=[];
+  for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
+    if(!dr&&!dc) continue;
+    const rr=r+dr, cc=c+dc;
+    if(rr>=0&&rr<rows&&cc>=0&&cc<cols) out.push(rr*cols+cc);
+  }
+  return out;
+}
+/* Kurzbewertung eines Namens fürs Dropdown (ganzes Beet): "⚠️ ", "🤝 " oder "" */
+function neighborIcon(bed,name){
+  let bad=false, good=false;
+  bed.plantings.forEach(p=>{
+    if(p.wholebed) return;
+    const r=pairRel(name,p.vegName);
+    if(r==="bad") bad=true; else if(r==="good") good=true;
+  });
+  return bad?"⚠️ ":good?"🤝 ":"";
+}
+/* Mischkultur-Check: vergleicht eine neue Pflanze mit den Pflanzen im Beet; mit Position nur mit direkten Nachbarfeldern */
+function neighborCheck(bed,name,cell){
+  const nv = vegById(name);
+  if(!nv || GRUENDUENGUNG.includes(nv)) return "";
+  const bad=[], good=[];
+  const seen = new Set();
+  const adj = (cell!=null && cell!=="") ? new Set(adjacentCells(bed,parseInt(cell,10))) : null;
+  bed.plantings.forEach(p=>{
+    if(p.wholebed || seen.has(p.vegName) || p.vegName===name) return;
+    if(adj && p.cell!=null && !adj.has(p.cell)) return; // zu weit weg, um zu stören
+    seen.add(p.vegName);
+    const r = pairRel(name,p.vegName);
+    if(r==="bad") bad.push(p.vegName); else if(r==="good") good.push(p.vegName);
+  });
+  const sameFam = [...seen].filter(n=>{ const o=vegById(n); return o && nv.fk && o.fk===nv.fk && STAUDEN.indexOf(nv)<0; });
+  const where = adj ? "direkt daneben" : "im Beet";
+  let html="";
+  if(bad.length) html += `<div class="warnbox" style="margin-top:0">⚠️ Schlechte Nachbarn ${where}: <b>${bad.join(", ")}</b>. ${adj?"Wähle ein Feld weiter weg oder ein anderes Beet.":"Besser in ein anderes Beet oder weit auseinander pflanzen."}</div>`;
+  if(good.length) html += `<div class="okbox" style="margin-top:8px">🤝 Gute Nachbarn ${where}: <b>${good.join(", ")}</b>.</div>`;
+  if(sameFam.length && !bad.length) html += `<div class="warnbox" style="margin-top:8px">ℹ️ Gleiche Pflanzenfamilie wie ${sameFam.join(", ")} – nährstoff- und krankheitsanfällig bei Dauerbelegung.</div>`;
+  return html;
+}
+
 function openAddPlanting(bedId, prefillCell){
   const bed = beds.find(b=>b.id===bedId);
   const sheet = document.getElementById("formSheet");
-  const positionFieldNormal = `<div class="field"><label>Position im Beet (optional)</label>
+  const positionFieldNormalFor = (name)=>`<div class="field"><label>Position im Beet (optional)</label>
         <select id="plantCell">
           <option value="">Keine feste Position</option>
-          ${freeCells(bed).map(i=>`<option value="${i}">${cellLabel(bed,i)}</option>`).join("")}
+          ${freeCells(bed).map(i=>{
+            const ic = name ? (()=>{ let bad=false,good=false; adjacentCells(bed,i).forEach(c=>{ const p=bed.plantings.find(x=>x.cell===c&&!x.wholebed); if(!p) return; const r=pairRel(name,p.vegName); if(r==="bad") bad=true; else if(r==="good") good=true; }); return bad?"⚠️ ":good?"🤝 ":""; })() : "";
+            return `<option value="${i}">${ic}${cellLabel(bed,i)}</option>`;
+          }).join("")}
         </select>
       </div>`;
+  const positionFieldNormal = positionFieldNormalFor(null);
   const positionFieldPrefill = `<div class="field"><label>Position</label><p style="margin:0;font-weight:600">${cellLabel(bed,prefillCell)}</p></div>`;
   const positionFieldGruen = `<div class="field" id="gruenHint"><div class="okbox" style="margin-top:0">🌾 Gründüngung begrünt das ganze Beet – keine Einzelposition nötig.</div></div>`;
 
@@ -3357,14 +3471,15 @@ function openAddPlanting(bedId, prefillCell){
     <div class="handle"></div>
     <h2>Pflanze hinzufügen</h2>
     <div class="field"><label>Gemüse, Obst, Kraut, Staude oder Gründüngung</label>
+      <div style="font-size:.7rem;color:#00000080;margin-bottom:4px">⚠️ = schlechter Nachbar im Beet · 🤝 = guter Nachbar</div>
       <select id="plantVeg">
         ${Object.entries(FAMILIES).filter(([fk])=>fk!=="gruen").map(([fk,label])=>`
           <optgroup label="${label}">
-            ${VEG.filter(v=>v.fk===fk).map(v=>`<option value="${v.n}">${v.n}</option>`).join("")}
+            ${VEG.filter(v=>v.fk===fk).map(v=>`<option value="${v.n}">${neighborIcon(bed,v.n)}${v.n}</option>`).join("")}
           </optgroup>
         `).join("")}
         <optgroup label="🌸 Stauden">
-          ${STAUDEN.map(v=>`<option value="${v.n}">${v.n}</option>`).join("")}
+          ${STAUDEN.map(v=>`<option value="${v.n}">${neighborIcon(bed,v.n)}${v.n}</option>`).join("")}
         </optgroup>
         <optgroup label="🌾 Gründüngung (ganzes Beet)">
           ${GRUENDUENGUNG.map(v=>`<option value="${v.n}" data-gd="1">${v.n}</option>`).join("")}
@@ -3374,6 +3489,7 @@ function openAddPlanting(bedId, prefillCell){
     <div class="field"><label>Pflanzdatum</label>
       <input type="date" id="plantDate" value="${todayISO()}">
     </div>
+    <div id="neighborHint" style="margin-bottom:12px"></div>
     <div id="posWrap">${prefillCell!=null ? positionFieldPrefill : positionFieldNormal}</div>
     <button class="btn block" id="savePlanting">Hinzufügen</button>
   `;
@@ -3383,10 +3499,17 @@ function openAddPlanting(bedId, prefillCell){
   const vegSelect = document.getElementById("plantVeg");
   const posWrap = document.getElementById("posWrap");
   function isGD(){ return vegSelect.options[vegSelect.selectedIndex].dataset.gd==="1"; }
-  vegSelect.addEventListener("change",()=>{
-    if(prefillCell!=null) return; // feste Position durch Klick auf Zelle bleibt bestehen
-    posWrap.innerHTML = isGD() ? positionFieldGruen : positionFieldNormal;
-  });
+  const hintEl = document.getElementById("neighborHint");
+  const cellVal = ()=> prefillCell!=null ? prefillCell : (document.getElementById("plantCell")?document.getElementById("plantCell").value:"");
+  const updHint = ()=>{ hintEl.innerHTML = neighborCheck(bed, vegSelect.value, cellVal()); };
+  const rebuildPos = ()=>{
+    if(prefillCell!=null) return;
+    posWrap.innerHTML = isGD() ? positionFieldGruen : positionFieldNormalFor(vegSelect.value);
+    const pc = document.getElementById("plantCell");
+    if(pc) pc.addEventListener("change",updHint);
+  };
+  vegSelect.addEventListener("change",()=>{ rebuildPos(); updHint(); });
+  rebuildPos(); updHint();
 
   document.getElementById("savePlanting").addEventListener("click",()=>{
     const plantDate = document.getElementById("plantDate").value || todayISO();
@@ -3668,22 +3791,59 @@ function renderMoonMonthGrid(){
   grid.innerHTML = html;
 }
 
+let calBoden = "";
+function renderCalNow(){
+  const box = document.getElementById("calNow");
+  const nowM = new Date().getMonth()+1;
+  const isNow = calMonth===nowM;
+  let frostHtml = "";
+  try{
+    const cw = JSON.parse(localStorage.getItem(WEATHER_KEY)||"null");
+    const fr = cw && frostRisk(cw.data);
+    if(isNow && fr && fr.risk) frostHtml = `<div class="warnbox" style="margin-top:8px">❄️ Frostgefahr (min. ${fr.minVal.toFixed(1)}°C): Auspflanzen empfindlicher Pflanzen besser verschieben.</div>`;
+  }catch(e){}
+  const okB = v=>!calBoden || v.boden===calBoden;
+  const cnt = {ds:VEG.filter(v=>v.ds&&v.ds.includes(calMonth)&&okB(v)).length, vk:VEG.filter(v=>v.vk&&v.vk.includes(calMonth)&&okB(v)).length, ap:VEG.filter(v=>v.ap&&v.ap.includes(calMonth)&&okB(v)).length, er:VEG.filter(v=>v.er&&v.er.includes(calMonth)&&okB(v)).length};
+  box.innerHTML = `<div class="toolcard" style="margin-bottom:14px">
+    <div class="eyebrow">🌱 Was jetzt? · ${MONTH_NAMES[calMonth-1]}</div>
+    <p style="font-size:.8rem;margin:6px 0;color:var(--ink)">Säen, pflanzen und ernten für den gewählten Monat – optional passend zu deinem Boden.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      ${isNow ? "" : `<button class="btn small" id="calToNow">📍 Zum aktuellen Monat</button>`}
+      <select id="calBodenSel" style="flex:1;min-width:150px">
+        <option value="">Alle Bodenarten</option>
+        ${Object.entries(BODEN_TYPES).map(([k,l])=>`<option value="${k}" ${calBoden===k?"selected":""}>${l}</option>`).join("")}
+      </select>
+    </div>
+    <div class="chiprow" style="margin-top:8px">
+      <span class="chip" style="pointer-events:none">🌱 ${cnt.ds} säen</span>
+      <span class="chip" style="pointer-events:none">🪴 ${cnt.vk} vorziehen</span>
+      <span class="chip" style="pointer-events:none">🌿 ${cnt.ap} pflanzen</span>
+      <span class="chip" style="pointer-events:none">🧺 ${cnt.er} ernten</span>
+    </div>
+    ${frostHtml}
+  </div>`;
+  document.getElementById("calToNow")?.addEventListener("click",()=>{ calMonth=nowM; renderCalendar(); });
+  document.getElementById("calBodenSel").addEventListener("change",e=>{ calBoden=e.target.value; renderCalendar(); });
+}
 function renderCalendar(){
   renderMonthPicker();
+  renderCalNow();
   renderMoonWidget();
-  const ds = VEG.filter(v=>v.ds && v.ds.includes(calMonth));
-  const vk = VEG.filter(v=>v.vk && v.vk.includes(calMonth));
-  const ap = VEG.filter(v=>v.ap && v.ap.includes(calMonth));
-  const er = VEG.filter(v=>v.er && v.er.includes(calMonth));
+  const okB = v=>!calBoden || v.boden===calBoden;
+  const ds = VEG.filter(v=>v.ds && v.ds.includes(calMonth) && okB(v));
+  const vk = VEG.filter(v=>v.vk && v.vk.includes(calMonth) && okB(v));
+  const ap = VEG.filter(v=>v.ap && v.ap.includes(calMonth) && okB(v));
+  const er = VEG.filter(v=>v.er && v.er.includes(calMonth) && okB(v));
   const bluehend = STAUDEN.filter(v=>v.bluete && v.bluete.includes(calMonth));
 
+  const inBeet = n=>beds.some(b=>b.plantings.some(p=>p.vegName===n));
   function section(title,color,list){
     if(list.length===0) return `<div class="calsection"><h3><i style="background:${color}"></i>${title}</h3><div class="callist"><div class="item" style="color:#00000060">Diesen Monat nichts vorgesehen.</div></div></div>`;
     const groups = {"Gemüse":[],"Obst":[],"Kräuter":[]};
     list.forEach(v=>groups[artOf(v)].push(v));
     const groupHtml = Object.entries(groups).filter(([,arr])=>arr.length>0).map(([art,arr])=>`
       <div class="callist-label">${art} (${arr.length})</div>
-      <div class="callist">${arr.map(v=>`<div class="item"><b>${v.n}</b> <span>· ${FAMILIES[v.fk]}</span></div>`).join("")}</div>
+      <div class="callist">${arr.map(v=>`<div class="item" data-veg="${v.n}" style="cursor:pointer"><b>${v.n}</b> <span>· ${FAMILIES[v.fk]}${inBeet(v.n)?" · 🧑‍🌾 in deinem Beet":""}</span></div>`).join("")}</div>
     `).join("");
     return `<div class="calsection">
       <h3><i style="background:${color}"></i>${title}</h3>
@@ -3706,6 +3866,9 @@ function renderCalendar(){
     section("Ernte jetzt","var(--tomato)",er) +
     blumenSection();
 
+  document.querySelectorAll("#calContent [data-veg]").forEach(el=>{
+    el.addEventListener("click",()=>{ const v=VEG.find(x=>x.n===el.dataset.veg); if(v) openDetail(v); });
+  });
   document.querySelectorAll("[data-blume]").forEach(el=>{
     el.addEventListener("click",()=>{
       const v = STAUDEN.find(s=>s.n===el.dataset.blume);
@@ -3778,6 +3941,7 @@ updateFamToggleBtn();
 renderBodenChips();
 updateBodenToggleBtn();
 updateNotifyBtn();
+updateDryBtn();
 checkAndNotify();
 
 if("serviceWorker" in navigator){
